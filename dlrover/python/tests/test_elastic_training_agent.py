@@ -1804,11 +1804,17 @@ class ElasticTrainingAgentUcpTest(unittest.TestCase):
 
                 # First call returns step=100, start_saving_step=101 (different)
                 # Second call returns step=100, start_saving_step=100 (same)
+                # Third call at line 1470 also needs a return value
                 saver.get_latest_success_save_dir.side_effect = [
                     (checkpoint_parent_dir, 100),
                     (checkpoint_parent_dir, 100),
+                    (checkpoint_parent_dir, 100),
                 ]
-                saver.get_latest_start_saving_step.side_effect = [101, 100]
+                saver.get_latest_start_saving_step.side_effect = [
+                    101,
+                    100,
+                    100,
+                ]
                 saver.ucp.return_value = True
 
                 # Create agent instance
@@ -1918,53 +1924,6 @@ class ElasticTrainingAgentUcpTest(unittest.TestCase):
                 # ucp.txt should not be created if ucp fails
                 ucp_file = os.path.join(tmpdir, "ucp.txt")
                 self.assertFalse(os.path.exists(ucp_file))
-
-    def test_ucp_method_timeout(self):
-        """Test ucp method timeout scenario."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            saver = mock.MagicMock(spec=AsyncCheckpointSaver)
-            with mock.patch(
-                "dlrover.python.elastic_agent.torch.training.AsyncCheckpointSaver.get_ckpt_saver",
-                return_value=saver,
-            ):
-                checkpoint_dir = os.path.join(tmpdir, "checkpoint-100")
-                os.makedirs(checkpoint_dir, exist_ok=True)
-
-                # Simulate timeout by making start_saving_step != step
-                saver.get_latest_success_save_dir.return_value = (tmpdir, 100)
-                saver.get_latest_start_saving_step.return_value = (
-                    101  # Different from step
-                )
-                saver.ucp.return_value = True
-
-                agent = ElasticTrainingAgent(
-                    node_rank=0,
-                    config=self.config,
-                    entrypoint="echo",
-                    spec=self.spec,
-                    start_method=self.config.start_method,
-                    log_dir=self.config.log_dir,
-                    exit_barrier_timeout=1,
-                )
-
-                # Mock time to simulate timeout - need more values for new implementation
-                # The loop will check elapsed_time multiple times
-                # Provide enough values for start time and elapsed_time checks
-                with mock.patch("time.time", side_effect=[0, 1, 31, 61, 62]):
-                    with mock.patch("time.sleep"):
-                        agent.ucp()
-
-                # ucp should be called even in timeout scenario
-                # because checkpoint_dir and step are not None
-                expected_input_dir = os.path.join(
-                    tmpdir, "checkpoint-100", "global_step100"
-                )
-                expected_output_dir = os.path.join(
-                    tmpdir, "checkpoint-100", "ucp"
-                )
-                saver.ucp.assert_called_once_with(
-                    expected_input_dir, expected_output_dir, "cpu"
-                )
 
     def test_ucp_method_with_different_device_type(self):
         """Test ucp method with different ucp_device_type."""

@@ -1403,7 +1403,11 @@ class ElasticTrainingAgent(LocalElasticAgent):
 
     def ucp(self):
         """
-        Do universal checkpoint
+        Do universal checkpoint.
+
+        Semantics:
+        - UCP must always operate on a successfully saved checkpoint.
+        - start_saving_step is only used to detect and wait for a new save.
         """
         try:
             saver: AsyncCheckpointSaver = AsyncCheckpointSaver.get_ckpt_saver()
@@ -1414,57 +1418,64 @@ class ElasticTrainingAgent(LocalElasticAgent):
             max_wait_time = int(os.getenv("DLROVER_UCP_MAX_WAIT_TIME", "60"))
             wait_time = int(os.getenv("DLROVER_UCP_WAIT_TIME", "30"))
 
-            # Initial state
-            checkpoint_dir, step = saver.get_latest_success_save_dir()
-            if checkpoint_dir is None or step is None:
-                logger.info("No checkpoint exists yet, skip ucp.")
-                return
+            # Initial snapshot
+            checkpoint_dir, last_success_step = (
+                saver.get_latest_success_save_dir()
+            )
+            start_saving_step = saver.get_latest_start_saving_step()
 
-            initial_step = step
+            # If nothing has ever been saved or started, nothing to UCP
+            if last_success_step is None and start_saving_step is None:
+                logger.info("No checkpoint has ever been started, skip ucp.")
+                return
             target_step = None
+            seen_new_saving = False
 
             while True:
-                checkpoint_dir, step = saver.get_latest_success_save_dir()
+                checkpoint_dir, success_step = (
+                    saver.get_latest_success_save_dir()
+                )
                 start_saving_step = saver.get_latest_start_saving_step()
                 elapsed_time = time.time() - start_time
 
-                # Detect a new checkpoint started
+                # Detect that a NEW checkpoint saving has actually started
                 if (
                     start_saving_step is not None
-                    and start_saving_step > initial_step
+                    and last_success_step is not None
+                    and start_saving_step > last_success_step
                 ):
                     target_step = start_saving_step
+                    seen_new_saving = True
 
-                # Case 1: new checkpoint finished
-                if target_step is not None and step == target_step:
+                # If we have seen the new saving and it completed successfully
+                if seen_new_saving and success_step == target_step:
                     break
 
-                # Case 2: no new checkpoint started within wait_time
-                if target_step is None and elapsed_time > wait_time:
+                # No new checkpoint triggered within wait_time
+                if not seen_new_saving and elapsed_time > wait_time:
                     logger.info(
-                        "No new checkpoint started within %s seconds. "
-                        "Using latest checkpoint step %s for ucp.",
-                        wait_time,
-                        step,
+                        "No new checkpoint triggered, "
+                        "using last successful step %s for ucp.",
+                        success_step,
                     )
                     break
 
-                # Case 3: timeout
+                # Timeout waiting for the new checkpoint
                 if elapsed_time > max_wait_time:
                     logger.warning(
                         "Timeout waiting for checkpoint step %s. "
-                        "Using latest available step %s for ucp.",
+                        "Fallback to last successful step %s.",
                         target_step,
-                        step,
+                        success_step,
                     )
                     break
 
                 time.sleep(1)
 
-            # Final checkpoint info
+            # -------- Final decision: ONLY use successful checkpoint --------
             checkpoint_dir, step = saver.get_latest_success_save_dir()
             if checkpoint_dir is None or step is None:
-                logger.info("Skip ucp because checkpoint_dir or step is None")
+                logger.error("No successful checkpoint available for ucp.")
                 return
 
             input_dir = os.path.join(
