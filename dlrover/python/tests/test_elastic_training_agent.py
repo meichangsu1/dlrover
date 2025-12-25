@@ -1947,8 +1947,10 @@ class ElasticTrainingAgentUcpTest(unittest.TestCase):
                     exit_barrier_timeout=1,
                 )
 
-                # Mock time to simulate timeout (start at 0, then 301 seconds later)
-                with mock.patch("time.time", side_effect=[0, 301]):
+                # Mock time to simulate timeout - need more values for new implementation
+                # The loop will check elapsed_time multiple times
+                # Provide enough values for start time and elapsed_time checks
+                with mock.patch("time.time", side_effect=[0, 1, 31, 61, 62]):
                     with mock.patch("time.sleep"):
                         agent.ucp()
 
