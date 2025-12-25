@@ -225,6 +225,8 @@ class GlobalStep(Message):
 
 @dataclass
 class UCPReady(Message):
+    """Indicate whether Universal checkpoint is ready on the node."""
+
     ready: bool = True
 
 
