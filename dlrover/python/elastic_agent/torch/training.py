@@ -1401,99 +1401,99 @@ class ElasticTrainingAgent(LocalElasticAgent):
                 saver.save_shm_to_storage, 60, self._client
             )
 
-def ucp(self):
-    """
-    Do universal checkpoint
-    """
-    try:
-        saver: AsyncCheckpointSaver = AsyncCheckpointSaver.get_ckpt_saver()
-        if not saver:
-            return
+    def ucp(self):
+        """
+        Do universal checkpoint
+        """
+        try:
+            saver: AsyncCheckpointSaver = AsyncCheckpointSaver.get_ckpt_saver()
+            if not saver:
+                return
 
-        start_time = time.time()
-        max_wait_time = int(os.getenv("DLROVER_UCP_MAX_WAIT_TIME", "60"))
-        wait_time = int(os.getenv("DLROVER_UCP_WAIT_TIME", "30"))
+            start_time = time.time()
+            max_wait_time = int(os.getenv("DLROVER_UCP_MAX_WAIT_TIME", "60"))
+            wait_time = int(os.getenv("DLROVER_UCP_WAIT_TIME", "30"))
 
-        # Initial state
-        checkpoint_dir, step = saver.get_latest_success_save_dir()
-        if checkpoint_dir is None or step is None:
-            logger.info("No checkpoint exists yet, skip ucp.")
-            return
-
-        initial_step = step
-        target_step = None
-
-        while True:
+            # Initial state
             checkpoint_dir, step = saver.get_latest_success_save_dir()
-            start_saving_step = saver.get_latest_start_saving_step()
-            elapsed_time = time.time() - start_time
+            if checkpoint_dir is None or step is None:
+                logger.info("No checkpoint exists yet, skip ucp.")
+                return
 
-            # Detect a new checkpoint started
-            if (
-                start_saving_step is not None
-                and start_saving_step > initial_step
-            ):
-                target_step = start_saving_step
+            initial_step = step
+            target_step = None
 
-            # Case 1: new checkpoint finished
-            if target_step is not None and step == target_step:
-                break
+            while True:
+                checkpoint_dir, step = saver.get_latest_success_save_dir()
+                start_saving_step = saver.get_latest_start_saving_step()
+                elapsed_time = time.time() - start_time
 
-            # Case 2: no new checkpoint started within wait_time
-            if target_step is None and elapsed_time > wait_time:
-                logger.info(
-                    "No new checkpoint started within %s seconds. "
-                    "Using latest checkpoint step %s for ucp.",
-                    wait_time,
-                    step,
-                )
-                break
+                # Detect a new checkpoint started
+                if (
+                    start_saving_step is not None
+                    and start_saving_step > initial_step
+                ):
+                    target_step = start_saving_step
 
-            # Case 3: timeout
-            if elapsed_time > max_wait_time:
-                logger.warning(
-                    "Timeout waiting for checkpoint step %s. "
-                    "Using latest available step %s for ucp.",
-                    target_step,
-                    step,
-                )
-                break
+                # Case 1: new checkpoint finished
+                if target_step is not None and step == target_step:
+                    break
 
-            time.sleep(1)
+                # Case 2: no new checkpoint started within wait_time
+                if target_step is None and elapsed_time > wait_time:
+                    logger.info(
+                        "No new checkpoint started within %s seconds. "
+                        "Using latest checkpoint step %s for ucp.",
+                        wait_time,
+                        step,
+                    )
+                    break
 
-        # Final checkpoint info
-        checkpoint_dir, step = saver.get_latest_success_save_dir()
-        if checkpoint_dir is None or step is None:
-            logger.info("Skip ucp because checkpoint_dir or step is None")
-            return
+                # Case 3: timeout
+                if elapsed_time > max_wait_time:
+                    logger.warning(
+                        "Timeout waiting for checkpoint step %s. "
+                        "Using latest available step %s for ucp.",
+                        target_step,
+                        step,
+                    )
+                    break
 
-        input_dir = os.path.join(
-            checkpoint_dir,
-            f"checkpoint-{step}",
-            f"global_step{step}",
-        )
-        output_dir = os.path.join(
-            checkpoint_dir,
-            f"checkpoint-{step}",
-            "ucp",
-        )
+                time.sleep(1)
 
-        res = saver.ucp(
-            input_dir,
-            output_dir,
-            self._config.ucp_device_type,
-        )
-        if res:
-            with open(
-                os.path.join(checkpoint_dir, "ucp.txt"),
-                "w",
-                encoding="utf-8",
-            ) as f:
-                f.write(str(step))
+            # Final checkpoint info
+            checkpoint_dir, step = saver.get_latest_success_save_dir()
+            if checkpoint_dir is None or step is None:
+                logger.info("Skip ucp because checkpoint_dir or step is None")
+                return
 
-    except Exception:
-        logger.exception("ucp failed")
-        raise
+            input_dir = os.path.join(
+                checkpoint_dir,
+                f"checkpoint-{step}",
+                f"global_step{step}",
+            )
+            output_dir = os.path.join(
+                checkpoint_dir,
+                f"checkpoint-{step}",
+                "ucp",
+            )
+
+            res = saver.ucp(
+                input_dir,
+                output_dir,
+                self._config.ucp_device_type,
+            )
+            if res:
+                with open(
+                    os.path.join(checkpoint_dir, "ucp.txt"),
+                    "w",
+                    encoding="utf-8",
+                ) as f:
+                    f.write(str(step))
+
+        except Exception:
+            logger.exception("ucp failed")
+            raise
 
 
     def _stop_workers_to_restart(self):
