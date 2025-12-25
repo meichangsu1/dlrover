@@ -1495,7 +1495,6 @@ class ElasticTrainingAgent(LocalElasticAgent):
             logger.exception("ucp failed")
             raise
 
-
     def _stop_workers_to_restart(self):
         """
         The agent query from the dlrover job master to check whether to restart
