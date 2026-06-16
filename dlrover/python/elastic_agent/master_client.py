@@ -484,6 +484,52 @@ class MasterClient(Singleton, ABC):
         response = self._report(request)
         return response.success
 
+    def report_checkpoint_ready(
+        self,
+        job_id: str,
+        namespace: str,
+        step: int,
+        checkpoint_dir: str,
+        input_dir: str,
+        output_dir: str,
+        framework: str = "",
+        backend: str = "deepspeed",
+        device_type: str = "cpu",
+        timeout_seconds: int = 0,
+    ) -> comm.UcpTask:
+        request = comm.ReportCheckpointReady(
+            job_id=job_id,
+            namespace=namespace,
+            step=step,
+            checkpoint_dir=checkpoint_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            framework=framework,
+            backend=backend,
+            device_type=device_type,
+            timeout_seconds=timeout_seconds,
+        )
+        return self._get(request)
+
+    def acquire_ucp_task(self, worker_id: str) -> comm.UcpTask:
+        request = comm.UcpTaskRequest(worker_id=worker_id)
+        return self._get(request)
+
+    def update_ucp_task_status(
+        self, update: comm.UcpTaskStatusUpdate
+    ) -> bool:
+        response = self._report(update)
+        return response.success
+
+    def get_resume_checkpoint(self, job_id: str, namespace: str) -> str:
+        request = comm.ResumeCheckpointRequest(
+            job_id=job_id, namespace=namespace
+        )
+        response: comm.ResumeCheckpoint = self._get(request)
+        if not response:
+            return ""
+        return response.checkpoint_dir
+
     def sync_training_ports(self, port) -> comm.SyncTrainingPort:
         request = comm.SyncTrainingPort(port=port)
         response: comm.SyncTrainingPort = self._get(request)

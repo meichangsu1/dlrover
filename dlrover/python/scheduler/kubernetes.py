@@ -150,6 +150,7 @@ class k8sClient(Singleton):
             )
 
         self.client = client.CoreV1Api()
+        self.apps_client = client.AppsV1Api()
         self.setup_user_agent()
         self.api_instance = client.CustomObjectsApi()
         self._namespace = namespace
@@ -335,6 +336,28 @@ class k8sClient(Singleton):
             )
             return False
 
+    def create_deployment(self, deployment: client.V1Deployment):
+        name = (
+            deployment.get("metadata", {}).get("name")
+            if isinstance(deployment, dict)
+            else deployment.metadata.name
+        )
+        try:
+            self.apps_client.create_namespaced_deployment(
+                self._namespace, deployment
+            )
+            return True
+        except client.rest.ApiException as e:
+            if e.reason == k8sAPIExceptionReason.ALREADY_EXISTS:
+                logger.info("Deployment %s already exists.", name)
+                return True
+            logger.warning(
+                "Failed to create %s deployment: %s\n",
+                name,
+                e,
+            )
+            return False
+
     def patch_service(self, name, service: client.V1Service):
         """Patch a service
 
@@ -425,6 +448,8 @@ class K8sJobArgs(JobArgs):
         self.user = os.getenv("USER", "")
         k8s_client = k8sClient.singleton_instance(self.namespace)
         job = self._retry_to_get_job(k8s_client)
+        self.raw_job = job
+        self.ucp_service = job["spec"].get("ucpService", {})
         self.job_uuid = self._get_job_uuid(job)
         if "distributionStrategy" in job["spec"]:
             self.distribution_strategy = job["spec"]["distributionStrategy"]

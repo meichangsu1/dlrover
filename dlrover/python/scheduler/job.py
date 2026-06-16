@@ -108,6 +108,8 @@ class JobArgs(JsonSerializable):
         self.xpu_type: Accelerators = Accelerators.GENERIC_CPU
         self.enable_suspended = False
         self.training_elastic_mode = "base"
+        self.ucp_service = {}
+        self.raw_job = {}
 
     @abstractmethod
     def initilize(self):

@@ -1392,46 +1392,16 @@ class DeepSpeedCheckpointSaver(CommonDirCheckpointSaver):
         return deepspeed_dir
 
     def ucp(self, input_dir: str, output_dir: str, ucp_device_type: str):
-        import torch
-        from packaging import version
-        from torch.distributed.elastic.multiprocessing.api import (
-            SubprocessHandler,
+        from dlrover.python.elastic_agent.torch.ucp.converter import (
+            UcpConverter,
         )
 
-        def version_less_than_230():
-            current_version = version.parse(torch.__version__).base_version
-            return version.parse(current_version) <= version.parse("2.2.2")
-
-        def version_less_than_240():
-            current_version = version.parse(torch.__version__).base_version
-            return version.parse(current_version) <= version.parse("2.3.1")
-
-        import sys
-        import os
-
-        cmd = os.getenv("PYTHON_EXEC", sys.executable)
-        deepspeed_dir = self.get_deepspeed_install_dir()
-        args_list = [
-            deepspeed_dir + "/checkpoint/ds_to_universal.py",
-            "--input_folder",
-            f"{input_dir}",
-            "--output_folder",
-            f"{output_dir}",
-            "--inject_missing_state",
-        ]
-        if ucp_device_type != "cpu":
-            args_list.extend(["--device", ucp_device_type])
-        args = tuple(args_list)
-        if version_less_than_230():
-            handler = SubprocessHandler(cmd, args, {}, "", "")
-        else:
-            handler = SubprocessHandler(cmd, args, {}, "", "", 0)
-        ret = handler.proc.wait()
-        if ret != 0:
-            print(f"subprocess returned non-zero exit code{ret}")
-            return False
-        else:
-            return True
+        return UcpConverter().convert(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            device_type=ucp_device_type,
+            checkpoint_dir=self.checkpoint_dir,
+        )
 
     def get_latest_success_save_dir(self):
         try:

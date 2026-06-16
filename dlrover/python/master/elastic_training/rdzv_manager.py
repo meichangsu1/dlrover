@@ -12,6 +12,7 @@
 # limitations under the License.
 
 import math
+import os
 import time
 from abc import ABCMeta, abstractmethod
 from collections import OrderedDict
@@ -35,6 +36,10 @@ from dlrover.python.master.elastic_training.net_topology import (
     NodeTopologyMeta,
 )
 from dlrover.python.master.node.job_context import get_job_context
+from dlrover.python.master.elastic_training.ucp.task_manager import (
+    UcpTaskManager,
+    UcpTaskStatus,
+)
 from dlrover.python.training_event import DLRoverMasterEvent
 from dlrover.python.training_event.emitter import DurationSpan
 
@@ -585,6 +590,7 @@ class UcpRdzvManager(ElasticTrainingRendezvousManager):
 
     def __init__(self):
         super().__init__()
+        self._ucp_task_manager = UcpTaskManager.singleton_instance()
 
     def set_rdzv_blocked(self, blocked: bool, reason: Optional[str] = None):
         if blocked and not reason:
@@ -594,6 +600,30 @@ class UcpRdzvManager(ElasticTrainingRendezvousManager):
                 f"Waiting for previous round completion."
             )
         super().set_rdzv_blocked(blocked, reason)
+
+    def _pre_rdzv_check_hook(self) -> Tuple[bool, Optional[str]]:
+        task = self._ucp_task_manager.latest_task()
+        if not task:
+            return super()._pre_rdzv_check_hook()
+
+        if task.status == UcpTaskStatus.SUCCEEDED:
+            return False, None
+
+        allow_fallback = os.getenv(
+            "DLROVER_UCP_ALLOW_FAILURE_FALLBACK", "false"
+        ).lower() in ("true", "1", "yes", "y")
+        if task.status == UcpTaskStatus.FAILED and allow_fallback:
+            logger.warning(
+                "Allow rendezvous after failed UCP task %s because fallback is enabled.",
+                task.task_id,
+            )
+            return False, None
+
+        return (
+            True,
+            f"Waiting UCP task {task.task_id} for step {task.step}, "
+            f"status={task.status}.",
+        )
 
 
 class NetworkCheckRendezvousManager(RendezvousManager):

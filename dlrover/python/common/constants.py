@@ -400,6 +400,7 @@ class MemoryUnit(object):
 
 class k8sAPIExceptionReason(object):
     NOT_FOUND = "Not Found"
+    ALREADY_EXISTS = "AlreadyExists"
 
 
 class RendezvousName(object):

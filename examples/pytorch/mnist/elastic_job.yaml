@@ -9,6 +9,19 @@ metadata:
 spec:
   distributionStrategy: AllreduceStrategy
   optimizeMode: single-job
+  ucpService:
+    enabled: true
+    replicas: 1
+    deviceType: cpu
+    # image defaults to the worker image if omitted.
+    # image: registry.cn-hangzhou.aliyuncs.com/intell-ai/dlrover:pytorch-example
+    resources:
+      limits:
+        cpu: "8"
+        memory: 64Gi
+      requests:
+        cpu: "8"
+        memory: 64Gi
   replicaSpecs:
     worker:
       replicas: 4

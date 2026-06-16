@@ -1,0 +1,130 @@
+<mxfile host="app.diagrams.net" modified="2026-06-16T00:00:00.000Z" agent="Codex" version="24.7.17">
+  <diagram id="ucp-service-architecture" name="UCP Service Architecture">
+    <mxGraphModel dx="1500" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1500" pageHeight="900" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="DLRover UCP Service Architecture" style="text;html=1;strokeColor=none;fillColor=none;fontSize=24;fontStyle=1;align=center;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="360" y="20" width="780" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="masterNode" value="Master Node / DLRover Master Pod" style="swimlane;html=1;rounded=1;whiteSpace=wrap;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=16;fontStyle=1;startSize=36;" vertex="1" parent="1">
+          <mxGeometry x="480" y="100" width="540" height="390" as="geometry" />
+        </mxCell>
+
+        <mxCell id="trainingWorker" value="Training Worker Pod" style="swimlane;html=1;rounded=1;whiteSpace=wrap;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=16;fontStyle=1;startSize=36;" vertex="1" parent="1">
+          <mxGeometry x="70" y="160" width="340" height="300" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ucpWorker" value="UCP Worker Pod / UCP Service Deployment" style="swimlane;html=1;rounded=1;whiteSpace=wrap;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=16;fontStyle=1;startSize=36;" vertex="1" parent="1">
+          <mxGeometry x="1090" y="160" width="340" height="300" as="geometry" />
+        </mxCell>
+
+        <mxCell id="elasticJob" value="ElasticJob&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;spec.ucpService.enabled=true&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="630" y="560" width="240" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="storage" value="Shared Checkpoint Storage&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;checkpoint-{step}/global_step{step}&lt;br&gt;checkpoint-{step}/ucp&lt;br&gt;_SUCCESS / metadata.json / ucp.txt&lt;/font&gt;" style="shape=cylinder3d;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=15;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="570" y="700" width="360" height="130" as="geometry" />
+        </mxCell>
+
+        <mxCell id="agent" value="ElasticTrainingAgent&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;detect checkpoint&lt;br&gt;submit UCP task&lt;br&gt;inject resume arg&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="100" y="220" width="140" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="swift" value="ms-swift Training&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;save / resume checkpoint&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="250" y="250" width="130" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="servicer" value="MasterServicer&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;UCP RPC entrypoint&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="520" y="160" width="160" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="taskManager" value="UcpTaskManager&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;task state&lt;br&gt;retry / lease&lt;br&gt;latest ready checkpoint&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="690" y="265" width="170" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="rdzv" value="UcpRdzvManager&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;block rendezvous until&lt;br&gt;UCP task succeeds&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="520" y="370" width="170" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="deploymentCreator" value="DistributedJobMaster&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;create per-job&lt;br&gt;UCP Deployment&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#6c8ebf;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="820" y="150" width="160" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="worker" value="UCP Worker&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;poll task&lt;br&gt;call converter&lt;br&gt;report status&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1130" y="220" width="140" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="converter" value="UcpConverter&lt;br&gt;&lt;font style=&quot;font-size: 11px;&quot;&gt;run DeepSpeed&lt;br&gt;ds_to_universal.py&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="1280" y="250" width="125" height="80" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeSwiftAgent" value="checkpoint saved" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#82b366;fontSize=12;" edge="1" parent="1" source="swift" target="agent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeAgentMaster" value="1. report_checkpoint_ready&lt;br&gt;4. get_resume_checkpoint" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#82b366;fontSize=12;" edge="1" parent="1" source="agent" target="servicer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeServicerTask" value="create / query task" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#6c8ebf;fontSize=12;" edge="1" parent="1" source="servicer" target="taskManager">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeWorkerMaster" value="2. acquire_ucp_task&lt;br&gt;3. update_ucp_task_status" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#9673a6;fontSize=12;" edge="1" parent="1" source="worker" target="servicer">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1200" y="120" />
+              <mxPoint x="600" y="120" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edgeWorkerConverter" value="convert(task)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#9673a6;fontSize=12;" edge="1" parent="1" source="worker" target="converter">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeRdzvTask" value="latest_task()" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#6c8ebf;fontSize=12;" edge="1" parent="1" source="rdzv" target="taskManager">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeElasticJobDeployment" value="ucpService config" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#b85450;fontSize=12;" edge="1" parent="1" source="elasticJob" target="deploymentCreator">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeCreateDeployment" value="create Deployment" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#b85450;fontSize=12;" edge="1" parent="1" source="deploymentCreator" target="ucpWorker">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="edgeSwiftStorage" value="save DeepSpeed checkpoint" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#d6b656;fontSize=12;" edge="1" parent="1" source="swift" target="storage">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="315" y="650" />
+              <mxPoint x="750" y="650" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edgeConverterStorage" value="read checkpoint&lt;br&gt;write UCP output" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#d6b656;fontSize=12;" edge="1" parent="1" source="converter" target="storage">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1340" y="650" />
+              <mxPoint x="750" y="650" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="edgeAgentSwift" value="5. --resume_from_checkpoint" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;strokeWidth=2;strokeColor=#82b366;fontSize=12;" edge="1" parent="1" source="agent" target="swift">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="170" y="360" />
+              <mxPoint x="315" y="360" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="note" value="关系说明：Training Worker 生产 DeepSpeed checkpoint 并向 Master 提交 UCP task；UCP Worker 从 Master 拉取 task 并转换 checkpoint；Master 维护 task 状态，并用 UcpRdzvManager 控制弹性 rendezvous。共享存储是 Training Worker 和 UCP Worker 的数据交换边界。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;align=left;spacing=10;" vertex="1" parent="1">
+          <mxGeometry x="140" y="820" width="1220" height="50" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

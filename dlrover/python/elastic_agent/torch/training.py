@@ -1262,6 +1262,7 @@ class ElasticTrainingAgent(LocalElasticAgent):
             f"[{role}] starting training workers for entrypoint: "
             f"{spec.get_entrypoint_name()}"
         )
+        self._inject_ucp_resume_checkpoint(spec)
 
         if (
             self._config.numa_affinity
@@ -1545,6 +1546,30 @@ class ElasticTrainingAgent(LocalElasticAgent):
     def _get_time(self):
         return time.time()
 
+    def _inject_ucp_resume_checkpoint(self, spec: WorkerSpec):
+        elastic_mode = os.getenv("DLROVER_TRAINING_ELASTIC_MODE", "base").lower()
+        if elastic_mode != "ucp":
+            return
+        if not isinstance(spec.entrypoint, str):
+            return
+
+        args = tuple(spec.args)
+        if "--resume_from_checkpoint" in args:
+            return
+
+        entry_and_args = " ".join((spec.entrypoint,) + args)
+        if "swift" not in entry_and_args and "ms-swift" not in entry_and_args:
+            return
+
+        job_id = os.getenv(NodeEnv.JOB_NAME, "")
+        namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", ""))
+        checkpoint = self._client.get_resume_checkpoint(job_id, namespace)
+        if not checkpoint:
+            return
+
+        spec.args = args + ("--resume_from_checkpoint", checkpoint)
+        logger.info("Inject ms-swift resume checkpoint: %s", checkpoint)
+
     def ucp(self):
         """
         Do universal checkpoint.
@@ -1633,18 +1658,23 @@ class ElasticTrainingAgent(LocalElasticAgent):
                 "ucp",
             )
 
-            res = saver.ucp(
-                input_dir,
-                output_dir,
-                self._config.ucp_device_type,
+            job_id = os.getenv(NodeEnv.JOB_NAME, "")
+            namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", ""))
+            task = self._client.report_checkpoint_ready(
+                job_id=job_id,
+                namespace=namespace,
+                step=step,
+                checkpoint_dir=checkpoint_dir,
+                input_dir=input_dir,
+                output_dir=output_dir,
+                framework="ms-swift",
+                backend="deepspeed",
+                device_type=self._config.ucp_device_type,
+                timeout_seconds=int(
+                    os.getenv("DLROVER_UCP_TASK_TIMEOUT", "3600")
+                ),
             )
-            if res:
-                with open(
-                    os.path.join(checkpoint_dir, "ucp.txt"),
-                    "w",
-                    encoding="utf-8",
-                ) as f:
-                    f.write(str(step))
+            logger.info("Submitted UCP task: %s", task)
 
         except Exception:
             logger.exception("ucp failed")

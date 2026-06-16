@@ -98,6 +98,149 @@ def _create_master_service_on_k8s(namespace, job_name, job_uuid, target_port):
     return succeed
 
 
+def _create_ucp_service_deployment_if_needed(args: JobArgs):
+    from dlrover.python.scheduler.kubernetes import (
+        NODE_SERVICE_PORTS,
+        k8sClient,
+    )
+
+    if args.platform not in [
+        PlatformType.KUBERNETES,
+        PlatformType.PY_KUBERNETES,
+    ]:
+        return
+    if (args.training_elastic_mode or "").lower() != "ucp":
+        return
+
+    ucp_config = getattr(args, "ucp_service", {}) or {}
+    enabled = str(ucp_config.get("enabled", "false")).lower() in (
+        "true",
+        "1",
+        "yes",
+        "y",
+    )
+    if not enabled:
+        return
+
+    job = getattr(args, "raw_job", {}) or {}
+    worker_spec = (
+        job.get("spec", {})
+        .get("replicaSpecs", {})
+        .get(NodeType.WORKER, {})
+        .get("template", {})
+        .get("spec", {})
+    )
+    worker_container = (worker_spec.get("containers") or [{}])[0]
+    image = ucp_config.get("image") or worker_container.get("image", "")
+    if not image:
+        logger.warning("Skip creating UCP service for no image is configured.")
+        return
+
+    name = f"elasticjob-{args.job_name}-ucp-service"
+    master_addr = (
+        f"elasticjob-{args.job_name}-dlrover-master:"
+        f"{NODE_SERVICE_PORTS[NodeType.DLROVER_MASTER]}"
+    )
+    env = [
+        {"name": "DLROVER_MASTER_ADDR", "value": master_addr},
+        {
+            "name": "DLROVER_MASTER_SERVICE_TYPE",
+            "value": get_service_type(),
+        },
+        {
+            "name": "DLROVER_UCP_DEVICE_TYPE",
+            "value": str(ucp_config.get("deviceType", "cpu")),
+        },
+        {
+            "name": "DLROVER_UCP_POLL_INTERVAL",
+            "value": str(ucp_config.get("pollInterval", 5)),
+        },
+        {
+            "name": "DLROVER_UCP_TASK_TIMEOUT",
+            "value": str(ucp_config.get("taskTimeout", 3600)),
+        },
+        {"name": "ELASTIC_JOB_NAME", "value": args.job_name},
+        {"name": "JOB_UID", "value": args.job_uuid},
+        {
+            "name": "POD_NAME",
+            "valueFrom": {
+                "fieldRef": {"fieldPath": "metadata.name"},
+            },
+        },
+    ]
+    env.extend(ucp_config.get("env", []))
+
+    owner_ref = {
+        "apiVersion": "elastic.iml.github.io/v1alpha1",
+        "blockOwnerDeletion": True,
+        "kind": "ElasticJob",
+        "name": args.job_name,
+        "uid": args.job_uuid,
+    }
+    labels = {
+        ElasticJobLabel.JOB_KEY: args.job_name,
+        ElasticJobLabel.REPLICA_TYPE_KEY: "ucp-service",
+        "app": "dlrover",
+    }
+    container = {
+        "name": "ucp-worker",
+        "image": image,
+        "imagePullPolicy": ucp_config.get(
+            "imagePullPolicy",
+            worker_container.get("imagePullPolicy", "IfNotPresent"),
+        ),
+        "command": ucp_config.get(
+            "command",
+            [
+                "python",
+                "-m",
+                "dlrover.python.elastic_agent.torch.ucp.worker",
+            ],
+        ),
+        "env": env,
+        "resources": ucp_config.get(
+            "resources", worker_container.get("resources", {})
+        ),
+        "volumeMounts": ucp_config.get(
+            "volumeMounts", worker_container.get("volumeMounts", [])
+        ),
+    }
+    pod_spec = {
+        "restartPolicy": "Always",
+        "containers": [container],
+        "volumes": ucp_config.get("volumes", worker_spec.get("volumes", [])),
+    }
+    for key in ("nodeSelector", "tolerations", "affinity"):
+        if key in ucp_config:
+            pod_spec[key] = ucp_config[key]
+
+    deployment = {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {
+            "name": name,
+            "namespace": args.namespace,
+            "labels": labels,
+            "ownerReferences": [owner_ref],
+        },
+        "spec": {
+            "replicas": int(ucp_config.get("replicas", 1)),
+            "selector": {"matchLabels": labels},
+            "template": {
+                "metadata": {"labels": labels},
+                "spec": pod_spec,
+            },
+        },
+    }
+    succeed = k8sClient.singleton_instance(args.namespace).create_deployment(
+        deployment
+    )
+    if succeed:
+        logger.info("Created UCP service deployment %s.", name)
+    else:
+        logger.warning("Failed to create UCP service deployment %s.", name)
+
+
 class DistributedJobMaster(JobMaster):
     """The master of a distributed job which has multiple nodes. The master
     - launches nodes (e.g. the Pod on kubernetes).
@@ -131,6 +274,7 @@ class DistributedJobMaster(JobMaster):
                     "Fail to create the master service. "
                     "The master cannot recover from the failure."
                 )
+            _create_ucp_service_deployment_if_needed(args)
 
         self._job_ctx = get_job_context()
         self._job_ctx.set_job_args(args)

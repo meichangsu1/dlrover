@@ -507,6 +507,72 @@ class NodeCheckpointState(Message):
 
 
 @dataclass
+class ReportCheckpointReady(Message):
+    task_id: str = ""
+    job_id: str = ""
+    namespace: str = ""
+    step: int = 0
+    checkpoint_dir: str = ""
+    input_dir: str = ""
+    output_dir: str = ""
+    tmp_output_dir: str = ""
+    framework: str = ""
+    backend: str = "deepspeed"
+    device_type: str = "cpu"
+    max_retries: int = 0
+    timeout_seconds: int = 0
+
+
+@dataclass
+class UcpTask(Message):
+    task_id: str = ""
+    job_id: str = ""
+    namespace: str = ""
+    step: int = 0
+    checkpoint_dir: str = ""
+    input_dir: str = ""
+    output_dir: str = ""
+    tmp_output_dir: str = ""
+    framework: str = ""
+    backend: str = "deepspeed"
+    device_type: str = "cpu"
+    max_retries: int = 0
+    timeout_seconds: int = 0
+    status: str = ""
+    worker_id: str = ""
+    retry_count: int = 0
+    error_message: str = ""
+    created_at: int = 0
+    started_at: int = 0
+    finished_at: int = 0
+    updated_at: int = 0
+
+
+@dataclass
+class UcpTaskRequest(Message):
+    worker_id: str = ""
+
+
+@dataclass
+class UcpTaskStatusUpdate(Message):
+    task_id: str = ""
+    status: str = ""
+    worker_id: str = ""
+    error_message: str = ""
+
+
+@dataclass
+class ResumeCheckpointRequest(Message):
+    job_id: str = ""
+    namespace: str = ""
+
+
+@dataclass
+class ResumeCheckpoint(Message):
+    checkpoint_dir: str = ""
+
+
+@dataclass
 class DiagnosisReportData(Message):
     data_cls: str = ""
     data_content: str = ""

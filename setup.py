@@ -62,7 +62,10 @@ setup(
         ],
     },
     entry_points={
-        "console_scripts": ["dlrover-run=dlrover.trainer.torch.main:main"]
+        "console_scripts": [
+            "dlrover-run=dlrover.trainer.torch.main:main",
+            "dlrover-ucp-worker=dlrover.python.elastic_agent.torch.ucp.worker:main",
+        ]
     },
     data_files=[("bin", ["scripts/dlrover_run_affinity.sh"])],
 )

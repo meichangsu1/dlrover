@@ -60,6 +60,9 @@ from dlrover.python.master.elastic_training.rdzv_manager import (
     NetworkCheckRendezvousManager,
     RendezvousManager,
 )
+from dlrover.python.master.elastic_training.ucp.task_manager import (
+    UcpTaskManager,
+)
 from dlrover.python.master.monitor.perf_monitor import PerfMonitor
 from dlrover.python.master.node.job_context import get_job_context
 from dlrover.python.master.node.training_node import SyncNodeTrainingPorts
@@ -114,6 +117,7 @@ class MasterServicer(ABC):
         self._start_training_time = 0
         self._start_autoscale = False
         self._event_reporter = get_event_reporter()
+        self._ucp_task_manager = UcpTaskManager.singleton_instance()
 
         # preload module for class reflection
         self._diagnosis_data_module = importlib.import_module(
@@ -196,6 +200,19 @@ class MasterServicer(ABC):
         elif isinstance(req_message, comm.ElasticRunConfigRequest):
             configs = self._job_manager.get_elastic_run_configs()
             message = comm.ElasticRunConfig(configs=configs)
+        elif isinstance(req_message, comm.ReportCheckpointReady):
+            message = self._ucp_task_manager.report_checkpoint_ready(
+                req_message
+            )
+        elif isinstance(req_message, comm.UcpTaskRequest):
+            message = self._ucp_task_manager.acquire_task(
+                req_message.worker_id
+            )
+        elif isinstance(req_message, comm.ResumeCheckpointRequest):
+            path = self._ucp_task_manager.get_resume_checkpoint(
+                req_message.namespace, req_message.job_id
+            )
+            message = comm.ResumeCheckpoint(checkpoint_dir=path)
         elif isinstance(req_message, comm.PreCheckRequest):
             message = self._get_pre_check_result(
                 node_type, node_id, req_message
@@ -493,6 +510,8 @@ class MasterServicer(ABC):
             success = self._report_event(message)
         elif isinstance(message, comm.RdzvBlocked):
             success = self.set_rdzv_blocked(message)
+        elif isinstance(message, comm.UcpTaskStatusUpdate):
+            success = self._ucp_task_manager.update_status(message)
         elif isinstance(message, comm.DiagnosisAction):
             success = self._report_action(message)
 
