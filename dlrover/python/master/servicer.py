@@ -63,6 +63,9 @@ from dlrover.python.master.elastic_training.rdzv_manager import (
 from dlrover.python.master.elastic_training.ucp.task_manager import (
     UcpTaskManager,
 )
+from dlrover.python.master.elastic_training.suspend_manager import (
+    get_suspend_manager,
+)
 from dlrover.python.master.monitor.perf_monitor import PerfMonitor
 from dlrover.python.master.node.job_context import get_job_context
 from dlrover.python.master.node.training_node import SyncNodeTrainingPorts
@@ -118,6 +121,7 @@ class MasterServicer(ABC):
         self._start_autoscale = False
         self._event_reporter = get_event_reporter()
         self._ucp_task_manager = UcpTaskManager.singleton_instance()
+        self._suspend_manager = get_suspend_manager()
 
         # preload module for class reflection
         self._diagnosis_data_module = importlib.import_module(
@@ -213,6 +217,8 @@ class MasterServicer(ABC):
                 req_message.namespace, req_message.job_id
             )
             message = comm.ResumeCheckpoint(checkpoint_dir=path)
+        elif isinstance(req_message, comm.SuspendStatusRequest):
+            message = self._suspend_manager.get_status()
         elif isinstance(req_message, comm.PreCheckRequest):
             message = self._get_pre_check_result(
                 node_type, node_id, req_message
@@ -512,6 +518,8 @@ class MasterServicer(ABC):
             success = self.set_rdzv_blocked(message)
         elif isinstance(message, comm.UcpTaskStatusUpdate):
             success = self._ucp_task_manager.update_status(message)
+        elif isinstance(message, comm.SuspendReady):
+            success = self._suspend_manager.report_ready(message)
         elif isinstance(message, comm.DiagnosisAction):
             success = self._report_action(message)
 

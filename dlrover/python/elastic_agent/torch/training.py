@@ -1406,6 +1406,9 @@ class ElasticTrainingAgent(LocalElasticAgent):
                     return run_result
 
             elif state == WorkerState.HEALTHY:
+                if self._maybe_suspend_to_zero():
+                    return RunResult(state=WorkerState.SUCCEEDED)
+
                 # membership changes do not count as retries
                 if self._membership_changed(role, rdzv_handler):
                     self._graceful_exit_workers(
@@ -1546,6 +1549,40 @@ class ElasticTrainingAgent(LocalElasticAgent):
     def _get_time(self):
         return time.time()
 
+    def _maybe_suspend_to_zero(self):
+        try:
+            status = self._client.get_suspend_status()
+        except Exception:
+            logger.warning("Fail to get suspend status from master.")
+            return False
+
+        if not status or status.state != "SUSPENDING":
+            return False
+
+        logger.info("Start graceful suspend-to-zero: %s", status.reason)
+        try:
+            self.set_rdzv_blocked(True, "Suspend-to-zero is in progress.")
+            self._graceful_exit_workers(worker_group=self._worker_group)
+            self._save_ckpt_to_storage()
+
+            if self._worker_group.group_rank == 0:
+                task = self.ucp(wait_new_checkpoint=False)
+                if task and task.task_id:
+                    self._client.report_suspend_ready(
+                        node_id=self._node_rank,
+                        step=task.step,
+                        task_id=task.task_id,
+                    )
+                else:
+                    logger.error(
+                        "Skip suspend-ready because no UCP task is created."
+                    )
+                    return False
+            return True
+        except Exception:
+            logger.exception("Suspend-to-zero failed.")
+            return False
+
     def _inject_ucp_resume_checkpoint(self, spec: WorkerSpec):
         elastic_mode = os.getenv("DLROVER_TRAINING_ELASTIC_MODE", "base").lower()
         if elastic_mode != "ucp":
@@ -1570,7 +1607,7 @@ class ElasticTrainingAgent(LocalElasticAgent):
         spec.args = args + ("--resume_from_checkpoint", checkpoint)
         logger.info("Inject ms-swift resume checkpoint: %s", checkpoint)
 
-    def ucp(self):
+    def ucp(self, wait_new_checkpoint=True):
         """
         Do universal checkpoint.
 
@@ -1581,7 +1618,7 @@ class ElasticTrainingAgent(LocalElasticAgent):
         try:
             saver: AsyncCheckpointSaver = AsyncCheckpointSaver.get_ckpt_saver()
             if not saver:
-                return
+                return None
 
             start_time = self._get_time()
             max_wait_time = int(os.getenv("DLROVER_UCP_MAX_WAIT_TIME", "60"))
@@ -1596,11 +1633,16 @@ class ElasticTrainingAgent(LocalElasticAgent):
             # If nothing has ever been saved or started, nothing to UCP
             if last_success_step is None and start_saving_step is None:
                 logger.info("No checkpoint has ever been started, skip ucp.")
-                return
+                return None
+            if not wait_new_checkpoint and last_success_step is None:
+                logger.info(
+                    "No successful checkpoint exists, skip suspend UCP task."
+                )
+                return None
             target_step = None
             need_new_saving = False
 
-            while True:
+            while wait_new_checkpoint:
                 checkpoint_dir, success_step = (
                     saver.get_latest_success_save_dir()
                 )
@@ -1645,7 +1687,7 @@ class ElasticTrainingAgent(LocalElasticAgent):
             checkpoint_dir, step = saver.get_latest_success_save_dir()
             if checkpoint_dir is None or step is None:
                 logger.error("No successful checkpoint available for ucp.")
-                return
+                return None
 
             input_dir = os.path.join(
                 checkpoint_dir,
@@ -1675,6 +1717,7 @@ class ElasticTrainingAgent(LocalElasticAgent):
                 ),
             )
             logger.info("Submitted UCP task: %s", task)
+            return task
 
         except Exception:
             logger.exception("ucp failed")

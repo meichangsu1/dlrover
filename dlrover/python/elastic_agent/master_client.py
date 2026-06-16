@@ -530,6 +530,21 @@ class MasterClient(Singleton, ABC):
             return ""
         return response.checkpoint_dir
 
+    def get_suspend_status(self) -> comm.SuspendStatus:
+        request = comm.SuspendStatusRequest()
+        response: comm.SuspendStatus = self._get(request)
+        return response or comm.SuspendStatus()
+
+    def report_suspend_ready(
+        self, node_id: int, step: int = 0, task_id: str = "", reason: str = ""
+    ) -> bool:
+        response = self._report(
+            comm.SuspendReady(
+                node_id=node_id, step=step, task_id=task_id, reason=reason
+            )
+        )
+        return response.success
+
     def sync_training_ports(self, port) -> comm.SyncTrainingPort:
         request = comm.SyncTrainingPort(port=port)
         response: comm.SyncTrainingPort = self._get(request)

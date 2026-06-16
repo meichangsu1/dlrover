@@ -573,6 +573,25 @@ class ResumeCheckpoint(Message):
 
 
 @dataclass
+class SuspendStatusRequest(Message):
+    pass
+
+
+@dataclass
+class SuspendStatus(Message):
+    state: str = ""
+    reason: str = ""
+
+
+@dataclass
+class SuspendReady(Message):
+    node_id: int = 0
+    step: int = 0
+    task_id: str = ""
+    reason: str = ""
+
+
+@dataclass
 class DiagnosisReportData(Message):
     data_cls: str = ""
     data_content: str = ""

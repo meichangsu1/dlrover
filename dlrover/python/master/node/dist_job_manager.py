@@ -1371,6 +1371,28 @@ class DistributedJobManager(JobManager):
                 plan.remove_nodes.append(node)
         self._scaler.scale(plan)
 
+    def suspend_training_workers(self):
+        """Remove actual training nodes but keep desired ElasticJob spec."""
+        plan = ScalePlan()
+        job_nodes = self.get_job_nodes()
+        training_nodes = list(job_nodes[NodeType.WORKER].values())
+        if NodeType.PS in job_nodes:
+            training_nodes.extend(job_nodes[NodeType.PS].values())
+        for node in training_nodes:
+            if (
+                node.status in [NodeStatus.RUNNING, NodeStatus.PENDING]
+                and not node.is_released
+            ):
+                node.critical = False
+                node.relaunchable = False
+                node.is_released = True
+                node.status = NodeStatus.DELETED
+                logger.info("Suspend removes node %s", node.name)
+                self._job_context.update_job_node(node)
+                plan.remove_nodes.append(node)
+        if plan.remove_nodes:
+            self._scaler.scale(plan)
+
     def start_auto_scaling(self):
         """Start auto scaling nodes to improve the training throughput."""
         self._job_autoscaler.start_auto_scaling()

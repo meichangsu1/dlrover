@@ -51,6 +51,9 @@ from dlrover.python.master.node.event_callback import (
 )
 from dlrover.python.master.node.job_context import get_job_context
 from dlrover.python.master.servicer import create_master_service
+from dlrover.python.master.elastic_training.suspend_manager import (
+    get_suspend_manager,
+)
 from dlrover.python.master.shard.task_manager import TaskManager
 from dlrover.python.master.stats.job_collector import JobMetricCollector
 from dlrover.python.master.watcher.factory import new_elasticjob_watcher
@@ -284,6 +287,7 @@ class DistributedJobMaster(JobMaster):
             if args.enable_elastic_scheduling
             else None
         )
+        get_suspend_manager().set_job_manager(self.job_manager)
         self.task_manager = (
             TaskManager(
                 args.node_args[NodeType.WORKER].process_timeout,

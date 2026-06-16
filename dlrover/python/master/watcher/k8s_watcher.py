@@ -40,6 +40,9 @@ from dlrover.python.common.node import (
     NodeResource,
 )
 from dlrover.python.master.node.job_context import JobContext, get_job_context
+from dlrover.python.master.elastic_training.suspend_manager import (
+    get_suspend_manager,
+)
 from dlrover.python.master.resource.optimizer import ResourcePlan
 from dlrover.python.master.watcher.base_watcher import NodeWatcher
 from dlrover.python.scheduler.kubernetes import (
@@ -459,6 +462,7 @@ class K8sElasticJobWatcher(object):
         self._enable_suspended = args.enable_suspended
         self._k8s_client = k8sClient.singleton_instance(args.namespace)
         self._job_context = JobContext.singleton_instance()
+        self._suspend_manager = get_suspend_manager()
         self._job_pre_status = JobStage.JOB_INIT
 
     def watch(self):
@@ -493,12 +497,16 @@ class K8sElasticJobWatcher(object):
                         ):
                             logger.info("try to request suspend")
                             self._job_context.request_suspend()
+                            self._suspend_manager.request_suspend_to_zero(
+                                "ElasticJob spec.suspend=true"
+                            )
                         if (
                             not enable_suspended
                             and self._job_context.is_suspended()
                         ):
                             logger.info("try to request unsuspend")
                             self._job_context.request_unsuspend()
+                            self._suspend_manager.request_resume()
 
                 sleep(5)
             except Exception as e:
@@ -508,6 +516,9 @@ class K8sElasticJobWatcher(object):
     def start(self):
         if self._enable_suspended:
             self._job_context.request_suspend()
+            self._suspend_manager.request_suspend_to_zero(
+                "ElasticJob initial suspended"
+            )
 
         threading.Thread(
             target=self.watch, name="job-watcher", daemon=True
