@@ -97,6 +97,15 @@ class UcpConverter:
             os.rename(tmp_output_dir, output_dir)
 
         os.makedirs(output_dir, exist_ok=True)
+        checkpoint_root = os.path.dirname(output_dir)
+        output_tag = os.path.basename(output_dir)
+        with open(
+            os.path.join(checkpoint_root, "latest_universal"),
+            "w",
+            encoding="utf-8",
+        ) as f:
+            f.write(output_tag)
+
         metadata = {
             "job_id": job_id,
             "namespace": namespace,

@@ -56,6 +56,7 @@ from dlrover.python.common.global_context import (
 
 job_ctx = get_job_context()
 _dlrover_context = Context.singleton_instance()
+SUSPEND_TO_ZERO_ANNOTATION = "dlrover/suspend-to-zero"
 
 
 def _get_start_timestamp(pod_status_obj):
@@ -487,6 +488,30 @@ class K8sElasticJobWatcher(object):
                         "name", ""
                     ) == self._job_name:
                         logger.info(f"get elasticjob {evt_type} event")
+
+                        annotations = elasticjob_cr.get("metadata", {}).get(
+                            "annotations", {}
+                        ) or {}
+                        suspend_to_zero = annotations.get(
+                            SUSPEND_TO_ZERO_ANNOTATION
+                        )
+                        if suspend_to_zero is not None:
+                            enable_suspended = str(suspend_to_zero).lower() in (
+                                "true",
+                                "1",
+                                "yes",
+                                "y",
+                            )
+                            if enable_suspended:
+                                logger.info("try to request suspend-to-zero")
+                                self._suspend_manager.request_suspend_to_zero(
+                                    "ElasticJob annotation suspend-to-zero=true"
+                                )
+                            elif self._job_context.is_suspended():
+                                logger.info("try to request unsuspend")
+                                self._job_context.request_unsuspend()
+                                self._suspend_manager.request_resume()
+                            continue
 
                         enable_suspended = elasticjob_cr["spec"].get(
                             "suspend", False

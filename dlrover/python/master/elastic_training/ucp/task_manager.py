@@ -157,7 +157,10 @@ class UcpTaskManager:
     def get_resume_checkpoint(self, namespace: str, job_id: str) -> str:
         with self._lock:
             task = self._latest_ready.get(self._latest_key(namespace, job_id))
-            return task.output_dir if task else ""
+            if not task:
+                return ""
+            checkpoint_root = os.path.dirname(task.output_dir)
+            return checkpoint_root or task.output_dir
 
     def _find_task(self, task_id: str) -> Optional[comm.UcpTask]:
         for task in self._tasks.values():

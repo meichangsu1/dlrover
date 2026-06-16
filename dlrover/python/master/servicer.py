@@ -208,6 +208,15 @@ class MasterServicer(ABC):
             message = self._ucp_task_manager.report_checkpoint_ready(
                 req_message
             )
+            if message and message.task_id:
+                self._suspend_manager.report_ready(
+                    comm.SuspendReady(
+                        node_id=node_id,
+                        step=message.step,
+                        task_id=message.task_id,
+                        reason="checkpoint ready",
+                    )
+                )
         elif isinstance(req_message, comm.UcpTaskRequest):
             message = self._ucp_task_manager.acquire_task(
                 req_message.worker_id

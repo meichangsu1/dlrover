@@ -63,8 +63,17 @@ class SuspendManager:
             if self._ctx.state == SuspendState.RUNNING:
                 return
             logger.info("Request resume from suspend-to-zero.")
-            self._ctx = SuspendContext()
+            self._ctx.state = SuspendState.RESUMING
+            self._ctx.reason = ""
             self._ready_nodes.clear()
+        self._scale_workers_back()
+
+    def complete_resume(self):
+        with self._lock:
+            if self._ctx.state == SuspendState.RESUMING:
+                logger.info("Complete resume from suspend-to-zero.")
+                self._ctx = SuspendContext()
+                self._ready_nodes.clear()
 
     def get_status(self) -> comm.SuspendStatus:
         with self._lock:
@@ -106,11 +115,29 @@ class SuspendManager:
                 self._job_manager.suspend_training_workers()
             else:
                 self._job_manager.remove_training_nodes()
+            from dlrover.python.master.node.job_context import get_job_context
+
+            get_job_context().request_suspend()
             with self._lock:
                 self._ctx.state = SuspendState.SUSPENDED_ZERO_WORKER
             logger.info("Workers have been requested to scale to zero.")
         except Exception:
             logger.exception("Failed to scale workers to zero.")
+
+    def _scale_workers_back(self):
+        if not self._job_manager:
+            logger.warning("Skip scaling workers back for no job manager.")
+            return
+        try:
+            if hasattr(self._job_manager, "resume_training_workers"):
+                self._job_manager.resume_training_workers()
+            else:
+                logger.warning(
+                    "Skip scaling workers back because job manager has no "
+                    "resume_training_workers."
+                )
+        except Exception:
+            logger.exception("Failed to scale workers back.")
 
 
 def get_suspend_manager() -> SuspendManager:

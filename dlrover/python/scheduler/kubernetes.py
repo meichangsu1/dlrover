@@ -11,6 +11,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 import time
 from typing import Dict
@@ -39,6 +40,33 @@ NODE_SERVICE_PORTS = {
     NodeType.MASTER: 3333,
     NodeType.DLROVER_MASTER: 50001,
 }
+
+UCP_SERVICE_ANNOTATION = "dlrover/ucp-service"
+LEGACY_UCP_SERVICE_ANNOTATION = "ucpService"
+
+
+def _get_ucp_service_config(job):
+    spec_config = job.get("spec", {}).get("ucpService", {})
+    annotations = job.get("metadata", {}).get("annotations", {}) or {}
+    annotation_config = (
+        annotations.get(UCP_SERVICE_ANNOTATION)
+        or annotations.get(LEGACY_UCP_SERVICE_ANNOTATION)
+        or ""
+    )
+    if not annotation_config:
+        return spec_config
+    try:
+        config = json.loads(annotation_config)
+        if isinstance(config, dict):
+            return config
+        logger.warning(
+            "Ignore UCP service annotation because it is not a JSON object."
+        )
+    except Exception:
+        logger.warning(
+            "Ignore invalid UCP service annotation: %s", annotation_config
+        )
+    return spec_config
 
 JOB_SUFFIX = "-edljob-"
 USER_AGENT = "dlrover/29.0.0/python"
@@ -449,7 +477,7 @@ class K8sJobArgs(JobArgs):
         k8s_client = k8sClient.singleton_instance(self.namespace)
         job = self._retry_to_get_job(k8s_client)
         self.raw_job = job
-        self.ucp_service = job["spec"].get("ucpService", {})
+        self.ucp_service = _get_ucp_service_config(job)
         self.job_uuid = self._get_job_uuid(job)
         if "distributionStrategy" in job["spec"]:
             self.distribution_strategy = job["spec"]["distributionStrategy"]

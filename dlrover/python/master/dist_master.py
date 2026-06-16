@@ -52,6 +52,7 @@ from dlrover.python.master.node.event_callback import (
 from dlrover.python.master.node.job_context import get_job_context
 from dlrover.python.master.servicer import create_master_service
 from dlrover.python.master.elastic_training.suspend_manager import (
+    SuspendState,
     get_suspend_manager,
 )
 from dlrover.python.master.shard.task_manager import TaskManager
@@ -181,8 +182,8 @@ def _create_ucp_service_deployment_if_needed(args: JobArgs):
         "uid": args.job_uuid,
     }
     labels = {
-        ElasticJobLabel.JOB_KEY: args.job_name,
-        ElasticJobLabel.REPLICA_TYPE_KEY: "ucp-service",
+        "dlrover/elasticjob-name": args.job_name,
+        "dlrover/component": "ucp-service",
         "app": "dlrover",
     }
     container = {
@@ -482,6 +483,17 @@ class DistributedJobMaster(JobMaster):
                     break
                 self.job_manager.clear_exited_nodes()
                 if self.job_manager and self.job_manager.all_workers_exited():
+                    suspend_status = get_suspend_manager().get_status()
+                    if suspend_status.state in (
+                        SuspendState.SUSPENDED_ZERO_WORKER,
+                        SuspendState.RESUMING,
+                    ):
+                        logger.info(
+                            "All workers exited while suspend-to-zero state is %s.",
+                            suspend_status.state,
+                        )
+                        time.sleep(30)
+                        continue
                     if self.job_manager.pend_without_workers():
                         time.sleep(30)
                         continue
@@ -497,6 +509,7 @@ class DistributedJobMaster(JobMaster):
                             "All workers exited but there also are unfinished tasks",
                         )
                     break
+                get_suspend_manager().complete_resume()
 
                 if (
                     self.job_manager.all_running_node_hanged()

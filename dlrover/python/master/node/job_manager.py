@@ -150,6 +150,10 @@ class JobManager(metaclass=ABCMeta):
         """Remove runtime training nodes without changing the ElasticJob spec."""
         self.remove_training_nodes()
 
+    def resume_training_workers(self):
+        """Resume runtime training nodes after suspend-to-zero."""
+        pass
+
     @abstractmethod
     def start_auto_scaling(self):
         pass

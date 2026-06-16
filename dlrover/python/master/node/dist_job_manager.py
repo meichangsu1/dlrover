@@ -1393,6 +1393,39 @@ class DistributedJobManager(JobManager):
         if plan.remove_nodes:
             self._scaler.scale(plan)
 
+    def resume_training_workers(self):
+        """Create training workers from the current desired job resource."""
+        plan = self._create_initial_scale_plan()
+        worker_resource = plan.node_group_resources.get(NodeType.WORKER)
+        if not worker_resource or worker_resource.count <= 0:
+            logger.warning("Skip resuming workers for no worker resource.")
+            return
+        workers = self.get_job_nodes().get(NodeType.WORKER, {})
+        deleted_workers = sorted(
+            [
+                node
+                for node in workers.values()
+                if node.status == NodeStatus.DELETED
+            ],
+            key=lambda node: node.rank_index,
+        )
+        if deleted_workers:
+            worker_plan = self._worker_manager.relaunch_nodes(
+                deleted_workers[: worker_resource.count], False
+            )
+            if len(deleted_workers) < worker_resource.count:
+                extra_plan = self._worker_manager.adjust_worker(
+                    worker_resource
+                )
+                worker_plan.merge(extra_plan)
+        else:
+            worker_plan = self._worker_manager.adjust_worker(worker_resource)
+        if worker_plan.empty():
+            logger.info("Skip resuming workers because no scale plan is needed.")
+            return
+        logger.info("Resume training workers by plan %s", worker_plan.to_json())
+        self._scaler.scale(worker_plan)
+
     def start_auto_scaling(self):
         """Start auto scaling nodes to improve the training throughput."""
         self._job_autoscaler.start_auto_scaling()
