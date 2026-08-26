@@ -16,6 +16,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from typing import Dict
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -32,6 +33,7 @@ from dlrover.python.common.comm import (
 from dlrover.python.common.constants import (
     DistributionStrategy,
     ElasticJobLabel,
+    JobConstant,
     JobExitReason,
     JobStage,
     NodeEventType,
@@ -78,6 +80,7 @@ from dlrover.python.master.node.training_node import (
     update_nodes_priority,
 )
 from dlrover.python.master.resource.job import JobResource
+from dlrover.python.master.scaler.base_scaler import ScalePlan
 from dlrover.python.master.watcher.base_watcher import Node
 from dlrover.python.scheduler.job import LocalJobArgs
 from dlrover.python.tests.test_utils import (
@@ -182,7 +185,113 @@ class DistributedJobManagerTest(unittest.TestCase):
             nodes[NodeType.WORKER][0].config_resource.memory, 4096
         )
 
-    def test_node_priority(self):
+    def test_job_resource_group_affinity(self):
+        job = JobResource()
+        job.node_group_resources[NodeType.WORKER] = NodeGroupResource(
+            25, NodeResource(1, 4096)
+        )
+        job.group_affinity = {0: 10, 1: 15}
+
+        nodes = job.init_job_node_meta(1, get_service_fn, _get_node_name)
+        workers = nodes[NodeType.WORKER]
+        self.assertEqual(len(workers), 25)
+
+        # group 0 occupies index 0-9, group 1 occupies index 10-24
+        for i in range(10):
+            self.assertEqual(workers[i].group, 0, f"worker {i}")
+        for i in range(10, 25):
+            self.assertEqual(workers[i].group, 1, f"worker {i}")
+        # every worker carries the total group count
+        for node in workers.values():
+            self.assertEqual(node.group_size, 2)
+            self.assertTrue(node.has_group())
+
+        # group id ordering follows ascending group id, not dict order
+        job.group_affinity = {1: 15, 0: 10}
+        nodes = job.init_job_node_meta(1, get_service_fn, _get_node_name)
+        workers = nodes[NodeType.WORKER]
+        for i in range(10):
+            self.assertEqual(workers[i].group, 0)
+        for i in range(10, 25):
+            self.assertEqual(workers[i].group, 1)
+
+    def test_job_resource_without_group_affinity(self):
+        job = JobResource()
+        job.node_group_resources[NodeType.WORKER] = NodeGroupResource(
+            3, NodeResource(1, 4096)
+        )
+        nodes = job.init_job_node_meta(1, get_service_fn, _get_node_name)
+        for node in nodes[NodeType.WORKER].values():
+            self.assertIsNone(node.group)
+            self.assertIsNone(node.group_size)
+            self.assertFalse(node.has_group())
+
+    def _new_manager_with_worker_count(self, count):
+        """Build a lightweight DistributedJobManager with only the job
+        resource populated, bypassing the heavy __init__ so that
+        _init_group_affinity can be exercised in isolation."""
+        manager = DistributedJobManager.__new__(DistributedJobManager)
+        job_resource = JobResource()
+        if count is not None:
+            job_resource.node_group_resources[NodeType.WORKER] = (
+                NodeGroupResource(count, NodeResource(1, 4096))
+            )
+        manager._job_resource = job_resource
+        return manager
+
+    def test_init_group_affinity_disabled(self):
+        # no group_affinity -> no-op, job_resource untouched
+        manager = self._new_manager_with_worker_count(3)
+        manager._init_group_affinity(SimpleNamespace(group_affinity=None))
+        self.assertIsNone(manager._job_resource.group_affinity)
+        # an empty mapping is also treated as disabled
+        manager._init_group_affinity(SimpleNamespace(group_affinity={}))
+        self.assertIsNone(manager._job_resource.group_affinity)
+
+    def test_init_group_affinity_matched(self):
+        # worker replicas == sum(values) -> apply and forward
+        manager = self._new_manager_with_worker_count(25)
+        manager._init_group_affinity(
+            SimpleNamespace(group_affinity={0: 10, 1: 15})
+        )
+        self.assertEqual(manager._job_resource.group_affinity, {0: 10, 1: 15})
+
+    def test_init_group_affinity_mismatched(self):
+        # worker replicas != sum(values) -> raise on start
+        manager = self._new_manager_with_worker_count(2)
+        with self.assertRaisesRegex(ValueError, "requires worker replicas=25"):
+            manager._init_group_affinity(
+                SimpleNamespace(group_affinity={0: 10, 1: 15})
+            )
+        # the mapping must not be applied when validation fails
+        self.assertIsNone(manager._job_resource.group_affinity)
+
+    def test_init_group_affinity_without_worker_resource(self):
+        # no WORKER resource at all -> worker_count defaults to 0 -> raise
+        manager = DistributedJobManager.__new__(DistributedJobManager)
+        manager._job_resource = JobResource()
+        with self.assertRaisesRegex(ValueError, "requires worker replicas=5"):
+            manager._init_group_affinity(
+                SimpleNamespace(group_affinity={0: 5})
+            )
+        self.assertIsNone(manager._job_resource.group_affinity)
+
+    def test_init_group_affinity_via_job_manager_init(self):
+        # Exercise the __init__ path: create_job_manager must call
+        # _init_group_affinity and apply a matching group_affinity.
+        params = MockK8sAllreduceJobArgs()
+        params.initilize(16)
+        params.group_affinity = {0: 8, 1: 8}
+        manager = create_job_manager(params, PerfMonitor())
+        self.assertEqual(manager._job_resource.group_affinity, {0: 8, 1: 8})
+
+    def test_init_group_affinity_via_job_manager_init_mismatch(self):
+        # A mismatched group_affinity must fail the manager construction.
+        params = MockK8sAllreduceJobArgs()
+        params.initilize(16)
+        params.group_affinity = {0: 10, 1: 15}
+        with self.assertRaisesRegex(ValueError, "requires worker replicas=25"):
+            create_job_manager(params, PerfMonitor())
         job = JobResource()
         job.node_group_resources[NodeType.PS] = NodeGroupResource(
             3, NodeResource(8, 10240, priority="high")
@@ -351,6 +460,42 @@ class DistributedJobManagerTest(unittest.TestCase):
 
         node.exit_reason = NodeExitReason.RELAUNCHED
         self.assertFalse(manager._should_relaunch(node, NODE_STATE_FLOWS[6]))
+
+    def test_relaunch_node_records_failed_node_ip(self):
+        params = MockK8sPSJobArgs()
+        params.initilize()
+        manager = create_job_manager(params, PerfMonitor())
+        manager._worker_manager.relaunch_node = MagicMock(
+            return_value=ScalePlan()
+        )
+        manager._scaler = MagicMock()
+
+        node = Node(
+            node_type=NodeType.WORKER,
+            node_id=1,
+            status=NodeStatus.RUNNING,
+            config_resource=NodeResource(1, 4096),
+            max_relaunch_count=1,
+        )
+
+        # A nodecheck-failed node records its host IP before relaunch.
+        node.exit_reason = NodeExitReason.CHECK_FAIL
+        node.host_ip = "10.0.0.1"
+        manager._relaunch_node(node)
+        manager._scaler.add_failed_node_ip.assert_called_once_with("10.0.0.1")
+
+        # Other exit reasons must not record the host IP.
+        manager._scaler.add_failed_node_ip.reset_mock()
+        node.exit_reason = NodeExitReason.HARDWARE_ERROR
+        manager._relaunch_node(node)
+        manager._scaler.add_failed_node_ip.assert_not_called()
+
+        # A nodecheck failure without a host IP is skipped.
+        manager._scaler.add_failed_node_ip.reset_mock()
+        node.exit_reason = NodeExitReason.CHECK_FAIL
+        node.host_ip = ""
+        manager._relaunch_node(node)
+        manager._scaler.add_failed_node_ip.assert_not_called()
 
     def test_relaunch_node_group(self):
         params = MockK8sAllreduceJobArgs()
@@ -1405,6 +1550,186 @@ class DistributedJobManagerTest(unittest.TestCase):
 
         # Verify that job was requested to stop
         self.assertTrue(self.job_context.is_stopped())
+
+    def test_no_heartbeat_persists_terminal_deleted_status(self):
+        """Regression for BUG#1.
+
+        A no-heartbeat synthetic event carries status=FAILED with
+        event_type=DELETED (see DistributedJobManager._get_dead_node_event).
+        The state machine resolves it to the terminal DELETED status, so the
+        node must be persisted as DELETED rather than left in the non-terminal
+        FAILED state. Otherwise, when the stuck terminating pod later
+        re-emits a DELETED event, the node transitions FAILED->DELETED
+        (should_relaunch=False) and spuriously stops an all-reduce job even
+        though the worker has already been relaunched.
+        """
+        params = MockK8sAllreduceJobArgs()
+        params.initilize(worker_count=4)
+        manager = create_job_manager(params, PerfMonitor())
+        manager._init_nodes()
+        manager._scaler.scale = mock.MagicMock(return_value=None)
+        manager._k8s_client.list_namespaced_pod = mock.MagicMock(
+            return_value=client.V1PodList(items=[])
+        )
+
+        # Fixed-size all-reduce world: min_nodes == worker_num, so losing one
+        # non-relaunchable worker must stop the job.
+        manager._worker_manager.update_node_required_info((4, 4, 300))
+
+        worker0 = self.job_context.job_nodes()[NodeType.WORKER][0]
+        worker0.status = NodeStatus.RUNNING
+        worker0.relaunch_count = 0
+        self.job_context.update_job_node(worker0)
+
+        # 1) no-heartbeat synthetic event (status=FAILED, event DELETED),
+        #    exactly as built by _get_dead_node_event.
+        dead_node = Node(
+            NodeType.WORKER,
+            0,
+            NodeResource(1, 4096),
+            rank_index=0,
+            status=NodeStatus.FAILED,
+            name="test-worker-0",
+        )
+        dead_node.exit_reason = NodeExitReason.NO_HEARTBEAT
+        manager._process_event(NodeEvent(NodeEventType.DELETED, dead_node))
+
+        persisted = self.job_context.job_nodes()[NodeType.WORKER][0]
+        # The node must be in the terminal DELETED status, not FAILED.
+        self.assertEqual(persisted.status, NodeStatus.DELETED)
+        # The dead node has been relaunched (count 0 -> 1) and is not
+        # relaunchable anymore.
+        self.assertEqual(persisted.relaunch_count, 1)
+        self.assertFalse(persisted.relaunchable)
+
+        # 2) The stuck terminating pod re-emits a DELETED event later. Since
+        #    the node is already terminal DELETED, this must be a no-op and
+        #    must NOT stop the job (its replacement is already running).
+        reemit_node = Node(
+            NodeType.WORKER,
+            0,
+            NodeResource(1, 4096),
+            rank_index=0,
+            status=NodeStatus.DELETED,
+            name="test-worker-0",
+        )
+        manager._process_event(NodeEvent(NodeEventType.DELETED, reemit_node))
+
+        self.assertFalse(self.job_context.is_stopped())
+
+    def test_allreduce_not_stopped_when_replacement_pending(self):
+        """Regression: a failed worker that has already been relaunched
+        must not stop an all-reduce job when its old pod's trailing
+        FAILED->DELETED event arrives.
+
+        This mirrors the incident where a worker crashed (RUNNING->FAILED
+        via a genuine K8s MODIFIED event, relaunch decided) and then the
+        old crashed pod's deletion (FAILED->DELETED via MODIFIED) arrived
+        before the replacement pod was running. The top-of-_process_event
+        skip guard cannot help here because it queries K8s pods and the
+        replacement pod is not up yet; the all-reduce stop check must
+        instead see the replacement node already tracked in the job
+        context and skip the stop.
+        """
+        params = MockK8sAllreduceJobArgs()
+        params.initilize(worker_count=4)
+        manager = create_job_manager(params, PerfMonitor())
+        manager._init_nodes()
+        manager._scaler.scale = mock.MagicMock(return_value=None)
+        # No K8s pod for the replacement yet: the race window in which the
+        # top skip guard (which queries K8s pods) cannot find a running
+        # replacement pod.
+        manager._k8s_client.list_namespaced_pod = mock.MagicMock(
+            return_value=[]
+        )
+        # Fixed-size all-reduce world: min_nodes == worker_num, so losing
+        # one non-relaunchable worker with no replacement must stop the job.
+        manager._worker_manager.update_node_required_info((4, 4, 300))
+
+        worker0 = self.job_context.job_nodes()[NodeType.WORKER][0]
+        worker0.status = NodeStatus.RUNNING
+        worker0.relaunch_count = 0
+        self.job_context.update_job_node(worker0)
+
+        # The crash carries exit_reason "Error" (== FATAL_ERROR); the job
+        # is configured to relaunch fatal errors, so the worker relaunches.
+        old_relaunch_always = _dlrover_context.relaunch_always
+        _dlrover_context.relaunch_always = True
+        try:
+            # 1) worker-0 crashes: RUNNING -> FAILED (genuine K8s MODIFIED),
+            #    relaunch is decided and the replacement node is registered.
+            failed_node = Node(
+                NodeType.WORKER,
+                0,
+                NodeResource(1, 4096),
+                rank_index=0,
+                status=NodeStatus.FAILED,
+                name="test-worker-0",
+            )
+            failed_node.exit_reason = NodeExitReason.FATAL_ERROR
+            manager._process_event(
+                NodeEvent(NodeEventType.MODIFIED, failed_node)
+            )
+        finally:
+            _dlrover_context.relaunch_always = old_relaunch_always
+
+        # The replacement (rank 0) is now tracked, still INITIAL/PENDING,
+        # and worker-0 has been relaunched (count 0 -> 1).
+        persisted = self.job_context.job_nodes()[NodeType.WORKER][0]
+        self.assertEqual(persisted.relaunch_count, 1)
+        replacements = [
+            w
+            for wid, w in (manager.get_job_nodes()[NodeType.WORKER].items())
+            if wid != 0 and w.rank_index == 0
+        ]
+        self.assertTrue(replacements)
+        self.assertIn(
+            replacements[0].status,
+            [NodeStatus.INITIAL, NodeStatus.PENDING, NodeStatus.RUNNING],
+        )
+        self.assertFalse(self.job_context.is_stopped())
+
+        # 2) The old crashed pod's deletion arrives (FAILED -> DELETED via
+        #    MODIFIED) while the replacement pod is still not running. The
+        #    job must NOT stop, because the rank is still covered.
+        deleted_node = Node(
+            NodeType.WORKER,
+            0,
+            NodeResource(1, 4096),
+            rank_index=0,
+            status=NodeStatus.DELETED,
+            name="test-worker-0",
+        )
+        deleted_node.exit_reason = NodeExitReason.FATAL_ERROR
+        manager._process_event(NodeEvent(NodeEventType.MODIFIED, deleted_node))
+
+        self.assertFalse(self.job_context.is_stopped())
+
+    def test_handle_training_failure_truncates_large_error_data(self):
+        params = MockK8sAllreduceJobArgs()
+        params.initilize()
+        manager = create_job_manager(params, PerfMonitor())
+        manager._init_nodes()
+        manager._scaler.scale = MagicMock(return_value=None)
+
+        large_payload = "X" * (10 * 1024 * 1024)  # 10 MB
+
+        manager.handle_training_failure(
+            NodeType.WORKER,
+            0,
+            error_data=large_payload,
+            level=TrainingExceptionLevel.NODE_ERROR,
+        )
+
+        node = self.job_context.job_node(NodeType.WORKER, 0)
+        self.assertEqual(JobConstant.MAX_ERROR_DATA_LEN, 8 * 1024)
+        self.assertLessEqual(
+            len(node.exit_reason), JobConstant.MAX_ERROR_DATA_LEN
+        )
+        self.assertEqual(
+            node.exit_reason,
+            large_payload[: JobConstant.MAX_ERROR_DATA_LEN],
+        )
 
 
 class JobContextTest(unittest.TestCase):

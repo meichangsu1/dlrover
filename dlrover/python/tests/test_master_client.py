@@ -30,6 +30,7 @@ from dlrover.python.common.comm import (
 )
 from dlrover.python.common.constants import (
     CommunicationType,
+    JobConstant,
     NodeEnv,
     NodeEventType,
     NodeType,
@@ -91,6 +92,34 @@ class MasterClientTest(unittest.TestCase):
             "test", 0, TrainingExceptionLevel.WARNING
         )
         self.assertIsNone(res)
+
+    def test_report_failures_truncates_large_error_data(self):
+        self.assertEqual(JobConstant.MAX_ERROR_DATA_LEN, 8 * 1024)
+        large_payload = "X" * (10 * 1024 * 1024)  # 10 MB
+
+        sent_messages = []
+
+        original_report = self._master_client._report
+
+        def capture_report(message):
+            sent_messages.append(message)
+            return original_report(message)
+
+        self._master_client._report = capture_report
+
+        self._master_client.report_failures(
+            large_payload, 0, TrainingExceptionLevel.WARNING
+        )
+
+        self.assertEqual(len(sent_messages), 1)
+        self.assertLessEqual(
+            len(sent_messages[0].error_data),
+            JobConstant.MAX_ERROR_DATA_LEN,
+        )
+        self.assertEqual(
+            sent_messages[0].error_data,
+            large_payload[: JobConstant.MAX_ERROR_DATA_LEN],
+        )
 
     def test_ready_for_ps_relaunch(self):
         res = self._master_client.ready_for_ps_relaunch()
@@ -256,11 +285,14 @@ class MasterClientTest(unittest.TestCase):
         time.sleep(1)
         collector.stop_collectors()
 
-        self.assertEqual(_event_context.train_steps.size(), 2)
+        # The first step (177018->177019, a long ~22min step) is now tracked
+        # (no longer skipped by the collector), so train_steps holds 3 steps.
+        self.assertEqual(_event_context.train_steps.size(), 3)
         first_step = _event_context.train_steps.get_first_step_event()
         last_step = _event_context.train_steps.get_last_step_event()
-        self.assertEqual(first_step.step, 177020)
+        self.assertEqual(first_step.step, 177019)
         self.assertEqual(last_step.step, 177021)
+        self.assertTrue(first_step.is_first_step)
 
         self.assertEqual(_event_context.ckpt_steps.size(), 2)
         first_step = _event_context.ckpt_steps.get_first_step_event()
@@ -279,6 +311,7 @@ class MasterClientTest(unittest.TestCase):
             event_name=TrainEventName.TRAIN_EVT_STEP,
             event_type=EventTypeName.BEGIN,
             event_step=1,
+            step_type="train",
         )
         last_step = _event_context.train_steps.get_last_step_event()
         self.assertEqual(last_step.step, 1)
@@ -286,6 +319,8 @@ class MasterClientTest(unittest.TestCase):
             last_step.event_state, TrainEventState.TRAIN_EVT_BEGIN
         )
         self.assertEqual(last_step.begin_timestamp, now)
+        self.assertEqual(last_step.step_type, "train")
+        self.assertTrue(last_step.is_first_step)
 
         self._master_client.report_atorch_event(
             event_ts=now + 1,

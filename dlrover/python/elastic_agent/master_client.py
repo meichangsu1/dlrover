@@ -293,6 +293,7 @@ class MasterClient(Singleton, ABC):
         event_name,
         event_type,
         event_step,
+        step_type="",
     ):
         message = comm.AtorchEvent(
             timestamp=event_ts,
@@ -300,6 +301,7 @@ class MasterClient(Singleton, ABC):
             target=event_target,
             name=event_name,
             type=event_type,
+            step_type=step_type,
         )
 
         return self._report(message)
@@ -450,6 +452,11 @@ class MasterClient(Singleton, ABC):
         return response.success
 
     def report_failures(self, error_data, restart_count=-1, level=""):
+        if (
+            isinstance(error_data, str)
+            and len(error_data) > JobConstant.MAX_ERROR_DATA_LEN
+        ):
+            error_data = error_data[: JobConstant.MAX_ERROR_DATA_LEN]
         message = comm.NodeFailure(error_data, restart_count, level)
         self._report(message)
 

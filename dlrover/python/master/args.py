@@ -15,7 +15,11 @@ import argparse
 
 from dlrover.python.common.global_context import DefaultValues
 from dlrover.python.common.log import default_logger as logger
-from dlrover.python.util.args_util import parse_tuple_list, pos_int
+from dlrover.python.util.args_util import (
+    parse_group_affinity,
+    parse_tuple_list,
+    pos_int,
+)
 from dlrover.python.util.common_util import print_args
 
 
@@ -93,6 +97,14 @@ def _build_master_args_parser():
         help="Training downtime to detect job hang, unit is minute",
     )
     parser.add_argument(
+        "--max_hang_downtime",
+        default=DefaultValues.MAX_HANG_DOWNTIME,
+        type=pos_int,
+        help="The max downtime to detect job hang for non-pure-train step "
+        "(e.g. train,inspect / eval) and the first step, unit is minute. "
+        "Should be no less than --hang_downtime.",
+    )
+    parser.add_argument(
         "--xpu_type",
         default="nvidia",
         type=str,
@@ -130,6 +142,16 @@ def _build_master_args_parser():
         default=8080,
         type=pos_int,
         help="The port of the DLRover dashboard.",
+    )
+    parser.add_argument(
+        "--group-affinity",
+        "--group_affinity",
+        default=None,
+        type=parse_group_affinity,
+        help='Node group sizes, e.g. --group-affinity="{0: 10, 1: 15}" '
+        "means group 0 has 10 pods and group 1 has 15 pods. The worker "
+        "replicas in the ElasticJob CRD must equal the sum of all group "
+        "sizes, otherwise the master fails to start.",
     )
     return parser
 

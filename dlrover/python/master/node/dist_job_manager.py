@@ -25,6 +25,7 @@ from dlrover.python.common.constants import (
     DistributionStrategy,
     ElasticJobLabel,
     EventReportConstants,
+    JobConstant,
     JobExitReason,
     JobStage,
     NodeEventType,
@@ -131,6 +132,8 @@ class DistributedJobManager(JobManager):
             )
             node_restart_count[type] = node_args.restart_count
 
+        self._init_group_affinity(job_args)
+
         self._ps_is_critical = False
         if (
             job_args.distribution_strategy == DistributionStrategy.PS
@@ -193,10 +196,43 @@ class DistributedJobManager(JobManager):
             job_args.job_uuid,
         )
         self._scaler: Scaler = job_scaler
+        # _init_group_affinity (above) has already applied --group-affinity
+        # onto self._job_resource; forward it to the scaler so newly created
+        # pods can be labeled with their node group.
+        self._scaler.set_group_affinity(self._job_resource.group_affinity)
         self._init_training_node_manager()
         self._relaunched_groups: List[int] = []
         self._group_relaunch_count = 0
         self._max_group_relaunch_count = _dlrover_context.max_relaunch_count
+
+    def _init_group_affinity(self, job_args: JobArgs):
+        """Validate and apply the ``--group-affinity`` configuration.
+
+        When ``group_affinity`` is configured, the worker replicas declared
+        in the ElasticJob CRD must equal the sum of all group sizes; the
+        master fails to start otherwise. On success the mapping is forwarded
+        to the ``JobResource`` so that worker nodes are partitioned into the
+        configured node groups.
+        """
+        if not job_args.group_affinity:
+            return
+        worker_resource = self._job_resource.node_group_resources.get(
+            NodeType.WORKER
+        )
+        worker_count = worker_resource.count if worker_resource else 0
+        expected = sum(job_args.group_affinity.values())
+        if worker_count != expected:
+            raise ValueError(
+                f"--group-affinity requires worker replicas={expected}, "
+                f"but got CRD worker replicas={worker_count}"
+            )
+        self._job_resource.group_affinity = job_args.group_affinity
+        logger.info(
+            "Enable node group affinity: %s (total %d groups, %d workers)",
+            job_args.group_affinity,
+            len(job_args.group_affinity),
+            expected,
+        )
 
     def start(self):
         self._scaler.start()
@@ -255,6 +291,43 @@ class DistributedJobManager(JobManager):
             self._job_args.distribution_strategy
             == DistributionStrategy.ALLREDUCE
         )
+
+    def _has_live_replacement(self, node: Node) -> bool:
+        """Whether another worker of the same rank is still alive or
+        coming up.
+
+        When a worker has already been relaunched, the trailing
+        ``FAILED -> DELETED`` event of its old pod must not stop an
+        all-reduce job, because the rank is still served by the
+        replacement. This is especially needed when the replacement pod
+        is not running yet (the scaler has not created it), so the
+        top-of-_process_event skip guard -- which queries K8s pods --
+        cannot see it. Here we look at the replacement node already
+        tracked in the job context for the same ``rank_index`` in a live
+        state (``INITIAL``/``PENDING``/``RUNNING``).
+        """
+        if node.type != NodeType.WORKER:
+            return False
+        live_states = {
+            NodeStatus.INITIAL,
+            NodeStatus.PENDING,
+            NodeStatus.RUNNING,
+        }
+        workers = self._job_context.dup_job_nodes_by_type(node.type)
+        for wid, worker in workers.items():
+            if wid == node.id:
+                continue
+            if (
+                worker.rank_index == node.rank_index
+                and worker.status in live_states
+            ):
+                logger.info(
+                    f"Skip stopping the job for {node.name} since a "
+                    f"live replacement {worker.name} (rank "
+                    f"{worker.rank_index}) already exists."
+                )
+                return True
+        return False
 
     def restart(self):
         if not self.is_all_reduce_type_job():
@@ -880,7 +953,15 @@ class DistributedJobManager(JobManager):
             ):
                 return
 
-            # Update the node status
+            # Update the node status. A synthetic event (e.g. no-heartbeat)
+            # may carry a FAILED status while the state machine resolves to
+            # DELETED; persist the resolved terminal status to avoid leaving
+            # the node in a non-terminal FAILED state.
+            if (
+                new_status == NodeStatus.FAILED
+                and status_change_flow.to_status == NodeStatus.DELETED
+            ):
+                new_status = status_change_flow.to_status
             cur_node.update_status(new_status)
             new_status = status_change_flow.to_status
             cur_node.set_exit_reason(event.node.exit_reason)
@@ -910,11 +991,18 @@ class DistributedJobManager(JobManager):
         if should_relaunch:
             self._relaunch_node(cur_node)
         elif new_status in [NodeStatus.FAILED, NodeStatus.DELETED]:
-            # stop if min rdzv nodes are not enough for all-reduce
+            # stop if min rdzv nodes are not enough for all-reduce. A node
+            # that has already been relaunched still owns a live replacement
+            # for its rank, so its trailing FAILED/DELETED event must not
+            # stop the whole job.
             if self.is_all_reduce_type_job():
-                if self._worker_manager.get_min_nodes_required() > 0 and (
-                    self.get_worker_num() - 1
-                    < self._worker_manager.get_min_nodes_required()
+                if (
+                    self._worker_manager.get_min_nodes_required() > 0
+                    and (
+                        self.get_worker_num() - 1
+                        < self._worker_manager.get_min_nodes_required()
+                    )
+                    and not self._has_live_replacement(cur_node)
                 ):
                     reason = f"Stop job because there isn't enough nodes available as {cur_node.name} can't be relaunch anymore."
                     logger.warning(reason)
@@ -1083,6 +1171,15 @@ class DistributedJobManager(JobManager):
         return should_relaunch
 
     def _relaunch_node(self, node: Node):
+        # Record the host IP of a nodecheck-failed node before relaunching,
+        # so that the relaunch pod (and later pods) get scheduled away from
+        # it via node affinity in the scaler.
+        if node.exit_reason == NodeExitReason.CHECK_FAIL and node.host_ip:
+            self._scaler.add_failed_node_ip(node.host_ip)
+            logger.info(
+                f"Record nodecheck-failed node {node.name} with host IP "
+                f"{node.host_ip} to avoid relaunching onto it."
+            )
         if node.type == NodeType.WORKER:
             plan = self._worker_manager.relaunch_node(
                 node, self._remove_exited_node
@@ -1486,6 +1583,9 @@ class DistributedJobManager(JobManager):
     ):
         """Process the training failure reported by the node."""
         node = self._job_context.job_node(node_type, node_id)
+
+        if error_data and len(error_data) > JobConstant.MAX_ERROR_DATA_LEN:
+            error_data = error_data[: JobConstant.MAX_ERROR_DATA_LEN]
 
         if error_data:
             # self detected reason override the reason from k8s pod
