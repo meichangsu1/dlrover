@@ -13,7 +13,7 @@
 import threading
 import time
 from typing import Dict
-
+import copy
 from dlrover.python.common.constants import (
     DistributionStrategy,
     ElasticJobLabel,
@@ -216,7 +216,12 @@ def _create_ucp_service_deployment_if_needed(args: JobArgs):
     }
     for key in ("nodeSelector", "tolerations", "affinity"):
         if key in ucp_config:
-            pod_spec[key] = ucp_config[key]
+            value = ucp_config[key]
+        elif key in worker_spec:
+            value = worker_spec[key]
+        else:
+            continue
+        pod_spec[key] = copy.deepcopy(value)
 
     deployment = {
         "apiVersion": "apps/v1",
